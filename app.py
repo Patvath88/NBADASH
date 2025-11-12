@@ -1,9 +1,3 @@
-# -------------------------------------------------
-# app.py | Hot Shot Props – NBA Prop Lab (AI Edition)
-# -------------------------------------------------
-# Displays: Game Slate + AI Model Top Edges + Player Analyzer Link
-# -------------------------------------------------
-
 import streamlit as st
 import pandas as pd
 import json
@@ -156,3 +150,4 @@ st.markdown(
     "Data from NBA API & FanDuel</div>",
     unsafe_allow_html=True
 )
+
