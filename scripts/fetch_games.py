@@ -1,28 +1,27 @@
-# scripts/fetch_games.py
-# BallDontLie NBA game schedule (no auth required)
-import requests, pandas as pd
-from datetime import datetime
+import requests
+import pandas as pd
+from datetime import date
 
 def fetch_games_today():
-    """Return today's NBA games."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    print(f"🏀 Fetching NBA games (BallDontLie) for {today}...")
+    """Fetch today's NBA games from BallDontLie."""
     try:
-        r = requests.get(f"https://api.balldontlie.io/v1/games?dates[]={today}", timeout=10)
+        today = date.today().strftime("%Y-%m-%d")
+        url = f"https://api.balldontlie.io/v1/games?dates[]={today}"
+        headers = {"Authorization": "69e7de67-01fa-4285-8e2f-21e3d8394fd3"}
+        r = requests.get(url, headers=headers, timeout=20)
         if r.status_code != 200:
-            print("⚠️ Failed to fetch BallDontLie data:", r.status_code)
             return pd.DataFrame()
-        games = r.json().get("data", [])
-        recs = []
-        for g in games:
-            recs.append({
-                "id": g.get("id"),
-                "home_team": g.get("home_team", {}).get("full_name"),
-                "away_team": g.get("visitor_team", {}).get("full_name"),
-                "status": g.get("status"),
-                "start_time": g.get("date"),
+
+        data = r.json().get("data", [])
+        games = []
+        for g in data:
+            games.append({
+                "home_team": g["home_team"]["full_name"],
+                "visitor_team": g["visitor_team"]["full_name"],
+                "status": g["status"],
+                "start_time": g["date"]
             })
-        return pd.DataFrame(recs)
+        return pd.DataFrame(games)
     except Exception as e:
-        print("⚠️ Error fetching games:", e)
+        print("Game fetch error:", e)
         return pd.DataFrame()
