@@ -1,13 +1,13 @@
 # -------------------------------------------------
-# app.py | Hot Shot Props – Infinite Loader Edition
+# app.py | Hot Shot Props – NBA Prop Lab (AI + Live Status)
 # -------------------------------------------------
-# Never times out. Keeps retrying fetches until data is loaded.
-# Shows user-friendly progress messages during long waits.
+# Adds Live Data Status display for all data sources.
 # -------------------------------------------------
 
 import streamlit as st
 import pandas as pd
 import time
+import requests
 from datetime import datetime
 from scripts.fetch_fanduel import load_fanduel_snapshot, fetch_fanduel_data
 from scripts.fetch_games import load_games_snapshot, fetch_games_today
@@ -25,9 +25,12 @@ st.markdown("""
 <style>
 body {background:#121212;color:#EAEAEA;font-family:'Roboto',sans-serif;}
 h1,h2,h3 {color:#FF6F00;text-shadow:0 0 8px #FF9F43;font-family:'Oswald',sans-serif;}
-div[data-testid="stAlert"] p {font-size:16px;}
-hr {border:0;border-top:1px solid #333;margin:1rem 0;}
 .section {background:#1C1C1C;border-radius:12px;padding:1rem;margin-bottom:1rem;}
+.data-status {background:#1e1e1e;border-radius:10px;padding:1rem;margin-bottom:1rem;}
+.data-status h4 {margin-bottom:0.5rem;}
+.status-ok {color:#00e676;font-weight:bold;}
+.status-warn {color:#ffea00;font-weight:bold;}
+.status-err {color:#ff1744;font-weight:bold;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -36,87 +39,147 @@ st.markdown("<h1>🏀 Hot Shot Props</h1>", unsafe_allow_html=True)
 st.markdown("<p style='color:#aaa;'>AI-powered NBA prop prediction lab with real-time edges</p>", unsafe_allow_html=True)
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# ---------- INFINITE FETCH LOOP ----------
+
+# ---------- LIVE STATUS PANEL ----------
+def check_status():
+    """Ping all key APIs and return their status."""
+    status = {}
+
+    # OddsAPI check
+    try:
+        odds_start = time.time()
+        resp = requests.get(
+            "https://api.the-odds-api.com/v4/sports/basketball_nba/odds",
+            timeout=10,
+        )
+        odds_time = round((time.time() - odds_start), 2)
+        status["OddsAPI"] = {
+            "ok": resp.status_code == 200,
+            "code": resp.status_code,
+            "time": odds_time,
+        }
+    except Exception as e:
+        status["OddsAPI"] = {"ok": False, "code": str(e), "time": None}
+
+    # BallDontLie check
+    try:
+        games_start = time.time()
+        resp = requests.get("https://api.balldontlie.io/v1/games", timeout=10)
+        games_time = round((time.time() - games_start), 2)
+        status["BallDontLie"] = {
+            "ok": resp.status_code == 200,
+            "code": resp.status_code,
+            "time": games_time,
+        }
+    except Exception as e:
+        status["BallDontLie"] = {"ok": False, "code": str(e), "time": None}
+
+    # NBA API (Player Stats)
+    try:
+        nba_start = time.time()
+        resp = requests.get("https://stats.nba.com/stats/scoreboardv2", timeout=10)
+        nba_time = round((time.time() - nba_start), 2)
+        status["NBA Stats"] = {
+            "ok": resp.status_code == 200,
+            "code": resp.status_code,
+            "time": nba_time,
+        }
+    except Exception as e:
+        status["NBA Stats"] = {"ok": False, "code": str(e), "time": None}
+
+    return status
+
+
+def render_status_panel():
+    """Display API health visually in the dashboard."""
+    st.markdown("### 📡 Live Data Status")
+
+    status = check_status()
+    cols = st.columns(3)
+    for i, (name, data) in enumerate(status.items()):
+        col = cols[i]
+        if data["ok"]:
+            col.markdown(
+                f"<div class='data-status'><h4>{name}</h4>"
+                f"<p class='status-ok'>🟢 ONLINE</p>"
+                f"<p>Response: {data['code']} • {data['time']}s</p></div>",
+                unsafe_allow_html=True,
+            )
+        elif data["time"] is None:
+            col.markdown(
+                f"<div class='data-status'><h4>{name}</h4>"
+                f"<p class='status-err'>🔴 OFFLINE</p>"
+                f"<p>{data['code']}</p></div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            col.markdown(
+                f"<div class='data-status'><h4>{name}</h4>"
+                f"<p class='status-warn'>🟡 UNSTABLE</p>"
+                f"<p>Response: {data['code']} • {data['time']}s</p></div>",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("<hr>", unsafe_allow_html=True)
+
+
+# ---------- MAIN DASHBOARD ----------
+render_status_panel()
+
+# (Everything below this stays the same)
+# Fetch data, show games, and model predictions
+from scripts.fetch_games import load_games_snapshot, fetch_games_today
+from scripts.fetch_fanduel import load_fanduel_snapshot, fetch_fanduel_data
+from scripts.apply_predictions import run_model_predictions
+
 def wait_for_data():
-    """Keep retrying until valid odds & games are fetched."""
     odds_df, games_df = pd.DataFrame(), pd.DataFrame()
-    progress = st.empty()
-    spinner = st.empty()
-    tries = 0
+    st.info("🔄 Fetching data... please wait.")
 
-    while (odds_df.empty or games_df.empty):
-        tries += 1
-        spinner.info(f"⏳ Attempt {tries}: Fetching live NBA odds and games... please wait.")
-        time.sleep(1)
+    odds_df = load_fanduel_snapshot()
+    if odds_df.empty:
+        odds_df = fetch_fanduel_data()
 
-        try:
-            # Odds first
-            odds_df = load_fanduel_snapshot()
-            if odds_df.empty:
-                odds_df = fetch_fanduel_data()
-        except Exception as e:
-            st.warning(f"⚠️ Error loading odds: {e}")
-            odds_df = pd.DataFrame()
+    games_df = load_games_snapshot()
+    if games_df.empty:
+        games_df = fetch_games_today()
 
-        try:
-            # Then games
-            games_df = load_games_snapshot()
-            if games_df.empty:
-                games_df = fetch_games_today()
-        except Exception as e:
-            st.warning(f"⚠️ Error loading games: {e}")
-            games_df = pd.DataFrame()
-
-        # small sleep between retries to prevent API hammering
-        if odds_df.empty or games_df.empty:
-            progress.progress(min(1.0, (tries % 10) / 10.0))
-            time.sleep(30)  # wait 30 sec then retry
-
-    progress.empty()
-    spinner.success(f"✅ Data loaded successfully after {tries} attempt(s).")
     return odds_df, games_df
 
 
-# ---------- MAIN ----------
 odds_df, games_df = wait_for_data()
-
-st.markdown(f"<p style='color:#0f0;'>Last updated: {datetime.now().strftime('%b %d, %Y %I:%M %p')}</p>", unsafe_allow_html=True)
+st.success(f"✅ Data refreshed successfully — {datetime.now().strftime('%b %d, %Y %I:%M %p')}")
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# ---------- DISPLAY GAMES ----------
+# ---------- DISPLAY ----------
 st.markdown("### 🏀 Today's Games")
 if games_df.empty:
-    st.info("No games found for today (may be due to offseason).")
+    st.warning("No games found for today (check data source).")
 else:
     st.dataframe(
-        games_df[["home_team", "away_team", "game_time", "status"]],
+        games_df[["home_team", "away_team", "status"]].reset_index(drop=True),
         use_container_width=True,
-        hide_index=True
+        hide_index=True,
     )
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# ---------- RUN MODEL ----------
 st.markdown("### 🤖 Top AI Model Edges (Projected Value Bets)")
-try:
+if not odds_df.empty:
     preds_df = run_model_predictions(odds_df, games_df)
-    if preds_df.empty:
-        st.info("No AI model predictions yet — waiting for prop lines.")
-    else:
-        st.dataframe(
-            preds_df[
-                ["player", "prop_type", "line", "model_projection", "edge_pct", "expected_value_over", "expected_value_under"]
-            ].round(2),
-            use_container_width=True,
-            hide_index=True
-        )
-except Exception as e:
-    st.error(f"⚠️ Error running model predictions: {e}")
+    st.dataframe(
+        preds_df[
+            ["player", "prop_type", "line", "model_projection", "edge_pct", "expected_value_over", "expected_value_under"]
+        ].round(2),
+        use_container_width=True,
+        hide_index=True,
+    )
+else:
+    st.info("No odds data available.")
 
-# ---------- FOOTER ----------
 st.markdown("<hr>", unsafe_allow_html=True)
-st.markdown("""
-<p style='text-align:center;color:#888;font-size:13px;'>
-Built by <b>Hot Shot Props</b> • AI-powered NBA analytics platform • Data from NBA API & FanDuel
-</p>
-""", unsafe_allow_html=True)
+st.markdown(
+    "<p style='text-align:center;color:#888;font-size:13px;'>"
+    "Built by <b>Hot Shot Props</b> • AI-powered NBA analytics platform</p>",
+    unsafe_allow_html=True,
+)
