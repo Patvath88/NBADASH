@@ -85,7 +85,7 @@ st.write("Live FanDuel props + BallDontLie games + AI model preview.")
 col1, col2 = st.columns([1,1])
 if col1.button("🔁 Refresh Data"):
     st.cache_data.clear()
-    st.experimental_rerun()
+    st.rerun()
 last_update = datetime.now().strftime("%b %d, %Y %I:%M:%S %p")
 col2.write(f"**Last updated:** {last_update}")
 
@@ -134,5 +134,6 @@ except Exception as e:
 
 st.markdown("---")
 st.caption("Hot Shot Props © 2025 — FanDuel scraping + AI predictions demo.")
+
 
 
