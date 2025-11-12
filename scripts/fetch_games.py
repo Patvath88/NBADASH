@@ -1,71 +1,71 @@
 # -------------------------------------------------
 # scripts/fetch_games.py
 # -------------------------------------------------
-# Pulls today's NBA schedule + team matchups via nba_api
-# Used by dashboard home page for Game Slate
+# Fetches today's NBA games (UTC-safe) and saves JSON
 # -------------------------------------------------
 
 import os
+import json
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from nba_api.stats.endpoints import scoreboardv2
 from nba_api.stats.library.parameters import LeagueID
 
-def fetch_games_today():
-    """
-    Fetch today's NBA games (date = system local time).
-    Returns a DataFrame with game_id, teams, and start time.
-    """
-    from datetime import datetime, timedelta, timezone
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+GAMES_PATH = os.path.join(DATA_DIR, "games_today.json")
 
+
+def fetch_games_today():
+    """Fetch today's NBA games and store valid JSON."""
     EST = timezone(timedelta(hours=-5))
     today = datetime.now(EST).strftime("%Y-%m-%d")
-    print(f"Fetching NBA games for {today}...")
+    print(f"🏀 Fetching NBA games for {today}...")
 
     try:
-        sb = scoreboardv2.ScoreboardV2(
-            league_id=LeagueID.nba,
-            game_date=today
-        )
+        sb = scoreboardv2.ScoreboardV2(league_id=LeagueID.nba, game_date=today)
+        games_df = sb.game_header.get_data_frame()
 
-        games_df = sb.line_score.get_data_frame()
-        teams_df = sb.game_header.get_data_frame()
+        if games_df.empty:
+            print("⚠️ No NBA games found (API returned empty).")
+            games_df = pd.DataFrame(columns=["game_id", "home_team", "away_team", "game_time"])
 
-        # Extract key info
-        matchups = []
-        for _, row in teams_df.iterrows():
-            home_team = row["HOME_TEAM_ABBREVIATION"]
-            away_team = row["VISITOR_TEAM_ABBREVIATION"]
-            game_time = row["GAME_STATUS_TEXT"]
-            game_id = row["GAME_ID"]
-
-            matchups.append({
-                "game_id": game_id,
-                "home_team": home_team,
-                "away_team": away_team,
-                "game_time": game_time,
-                "date": today,
-                "spread": None,  # placeholder until we merge odds
-                "total": None,
-                "status": row["GAME_STATUS_TEXT"]
+        game_rows = []
+        for _, row in games_df.iterrows():
+            game_rows.append({
+                "game_id": row["GAME_ID"],
+                "home_team": row["HOME_TEAM_ABBREVIATION"],
+                "away_team": row["VISITOR_TEAM_ABBREVIATION"],
+                "game_time": row["GAME_STATUS_TEXT"],
+                "status": row["GAME_STATUS_TEXT"],
+                "date": today
             })
 
-        df = pd.DataFrame(matchups)
-        save_path = os.path.join(os.path.dirname(__file__), "..", "data", "games_today.json")
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        df.to_json(save_path, orient="records", indent=2)
-        print(f"✅ {len(df)} games fetched and saved to {save_path}")
+        df = pd.DataFrame(game_rows)
+        df.to_json(GAMES_PATH, orient="records", indent=2)
+        print(f"✅ Saved {len(df)} games → {GAMES_PATH}")
         return df
 
     except Exception as e:
-        print(f"❌ Error fetching NBA games: {e}")
+        print(f"⚠️ Error fetching games: {e}")
         return pd.DataFrame()
 
+
+def load_games_snapshot():
+    """Safe loader with auto rebuild if file invalid or empty."""
+    if not os.path.exists(GAMES_PATH) or os.path.getsize(GAMES_PATH) < 5:
+        print("⚠️ No valid games file — rebuilding.")
+        return fetch_games_today()
+
+    try:
+        with open(GAMES_PATH, "r") as f:
+            data = json.load(f)
+        return pd.DataFrame(data)
+    except json.JSONDecodeError:
+        print("⚠️ games_today.json invalid — rebuilding.")
+        return fetch_games_today()
+
+
 if __name__ == "__main__":
-    df = fetch_games_today()
-    if not df.empty:
-        print(df.head())
-    else:
-        print("No NBA games available today.")
-
-
+    df = load_games_snapshot()
+    print(df)
