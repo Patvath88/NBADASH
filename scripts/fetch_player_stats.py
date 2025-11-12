@@ -1,114 +1,125 @@
 # -------------------------------------------------
 # scripts/fetch_player_stats.py
 # -------------------------------------------------
-# Fetches player game logs + calculates hit rates
-# Used by Player Prop Analyzer and model feature building
+# Hot Shot Props — Player Stats Fetcher (Stable Build)
+# Fetches player game logs safely via nba_api with retry, caching,
+# and fallback to local JSON if NBA API rate-limits or times out.
 # -------------------------------------------------
 
 import os
+import json
+import time
 import pandas as pd
 from datetime import datetime
-from nba_api.stats.endpoints import playergamelog
 from nba_api.stats.static import players
+from nba_api.stats.endpoints import playergamelog
+from requests.exceptions import ReadTimeout, ConnectionError
 
-CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "player_logs")
-os.makedirs(CACHE_DIR, exist_ok=True)
-
-def get_player_id(player_name: str):
-    """
-    Returns NBA player ID from name (partial match allowed).
-    """
-    player_dict = players.get_players()
-    for p in player_dict:
-        if player_name.lower() in p["full_name"].lower():
-            return p["id"], p["full_name"]
-    return None, None
+# -------------------------------------------------
+# PATHS
+# -------------------------------------------------
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "player_logs")
+os.makedirs(DATA_DIR, exist_ok=True)
 
 
-def fetch_player_gamelog(player_name: str, season: str = "2024-25"):
-    """
-    Fetch recent game logs for a given player (up to 20 games).
-    """
-    player_id, full_name = get_player_id(player_name)
-    if not player_id:
-        print(f"❌ Player not found: {player_name}")
-        return pd.DataFrame()
-
-    cache_path = os.path.join(CACHE_DIR, f"{player_id}.csv")
-
+# -------------------------------------------------
+# UTILITIES
+# -------------------------------------------------
+def _get_player_id(player_name: str):
+    """Resolve player ID from name (case-insensitive)."""
     try:
-        gamelog = playergamelog.PlayerGameLog(player_id=player_id, season=season)
-        df = gamelog.get_data_frames()[0]
-        df.to_csv(cache_path, index=False)
-        df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
-        df = df.sort_values("GAME_DATE", ascending=False).head(20)
-        print(f"✅ {full_name} logs fetched ({len(df)} games)")
-        return df
+        all_players = players.get_players()
+        match = next((p for p in all_players if p["full_name"].lower() == player_name.lower()), None)
+        return match["id"] if match else None
     except Exception as e:
-        print(f"⚠️ Error fetching logs for {player_name}: {e}")
-        if os.path.exists(cache_path):
-            print("➡️ Using cached data.")
-            return pd.read_csv(cache_path)
+        print(f"⚠️ Error resolving ID for {player_name}: {e}")
+        return None
+
+
+def _cache_path(player_name: str, season: str):
+    safe_name = player_name.replace(" ", "_").lower()
+    return os.path.join(DATA_DIR, f"{safe_name}_{season}.json")
+
+
+# -------------------------------------------------
+# MAIN FUNCTION
+# -------------------------------------------------
+def get_player_stats_summary(player_name: str, season: str = "2024-25"):
+    """
+    Fetch player logs for given player name.
+    Caches results locally to avoid hitting NBA API repeatedly.
+    """
+    pid = _get_player_id(player_name)
+    if not pid:
+        print(f"⚠️ Player not found: {player_name}")
         return pd.DataFrame()
 
+    cache_file = _cache_path(player_name, season)
+    # Return cached logs if fresh (under 12h old)
+    if os.path.exists(cache_file) and (time.time() - os.path.getmtime(cache_file)) < 43200:
+        try:
+            with open(cache_file, "r") as f:
+                data = json.load(f)
+            return pd.DataFrame(data)
+        except Exception:
+            pass  # fall back to refetch
 
-def calc_hit_rates(df: pd.DataFrame, stat: str, line: float):
-    """
-    Calculates hit rates for a given stat and prop line.
-    Returns L5/L10/L20 hit percentages.
-    """
-    if df.empty or stat not in df.columns:
-        return {"L5": None, "L10": None, "L20": None}
+    # Attempt up to 3 times (for rate-limit safety)
+    for attempt in range(3):
+        try:
+            print(f"📈 Fetching logs for {player_name} (attempt {attempt+1})...")
+            gamelog = playergamelog.PlayerGameLog(player_id=pid, season=season, timeout=30)
+            df = gamelog.get_data_frames()[0]
+            df["PLAYER_NAME"] = player_name
+            df["fetched_at"] = datetime.utcnow().isoformat()
 
-    df = df.copy()
-    df = df.sort_values("GAME_DATE", ascending=False)
-    df["hit"] = (df[stat] > line).astype(int)
+            # Save to cache
+            df.to_json(cache_file, orient="records", indent=2)
+            print(f"✅ Saved {len(df)} games for {player_name} → {cache_file}")
+            return df
 
-    def rate(n):
-        return round(df.head(n)["hit"].mean() * 100, 1) if len(df) >= n else None
+        except (ReadTimeout, ConnectionError) as e:
+            print(f"⚠️ Timeout for {player_name}: {e}. Retrying...")
+            time.sleep(3)
 
-    return {"L5": rate(5), "L10": rate(10), "L20": rate(20)}
+        except Exception as e:
+            print(f"⚠️ Error fetching logs for {player_name}: {e}")
+            time.sleep(1)
 
+    # Fallback: try to load stale cache if available
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "r") as f:
+                data = json.load(f)
+            print(f"⚠️ Using cached logs for {player_name} (API unreachable).")
+            return pd.DataFrame(data)
+        except Exception:
+            pass
 
-def get_player_stats_summary(player_name: str, prop_type: str, line: float):
-    """
-    Full pipeline: fetch logs + compute hit rates for the selected prop.
-    """
-    prop_map = {
-        "Points": "PTS",
-        "Rebounds": "REB",
-        "Assists": "AST",
-        "PRA": None,  # computed below
-        "3PM": "FG3M"
-    }
-
-    df = fetch_player_gamelog(player_name)
-    if df.empty:
-        return pd.DataFrame(), {}
-
-    if prop_type == "PRA":
-        df["PRA"] = df["PTS"] + df["REB"] + df["AST"]
-
-    stat = prop_map.get(prop_type)
-    if stat is None:
-        stat = prop_type  # fallback if custom type used
-
-    rates = calc_hit_rates(df, stat, line)
-    avg = df[stat].mean() if stat in df.columns else None
-
-    summary = {
-        "player": player_name,
-        "prop_type": prop_type,
-        "avg": round(avg, 1) if avg else None,
-        "line": line,
-        "hit_rates": rates,
-        "last_updated": datetime.utcnow().isoformat()
-    }
-
-    return df, summary
+    print(f"🚫 No logs available for {player_name}")
+    return pd.DataFrame()
 
 
+# -------------------------------------------------
+# BULK FETCH (Optional)
+# -------------------------------------------------
+def bulk_fetch_players(player_names, season="2024-25"):
+    """Fetch multiple players with progress display."""
+    all_logs = []
+    for name in player_names:
+        logs = get_player_stats_summary(name, season)
+        if not logs.empty:
+            all_logs.append(logs)
+        time.sleep(1.5)  # rate-limit buffer
+    if not all_logs:
+        return pd.DataFrame()
+    return pd.concat(all_logs, ignore_index=True)
+
+
+# -------------------------------------------------
+# TEST ENTRY POINT
+# -------------------------------------------------
 if __name__ == "__main__":
-    # Example test
-    df, summary = get_player_stats_summary("LeBron James", "Points", 25.5)
-    print(summary)
+    test_players = ["LeBron James", "Stephen Curry", "Luka Doncic"]
+    df = bulk_fetch_players(test_players)
+    print(df.head())
