@@ -5,10 +5,8 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime
-from scripts.fanduel_xhr import fetch_fanduel_props_xhr as fetch_fanduel_props
-from scripts.fetch_games import fetch_games_today
-from scripts.apply_predictions import run_model_predictions
+from scripts.fetch_fanduel import fetch_fanduel_props
+
 
 # ---------- CONFIG ----------
 ODDS_API_KEY = "9d7a2fe0abf8c36d7118873e7eb78974"
@@ -134,3 +132,4 @@ except Exception as e:
 
 st.markdown("---")
 st.caption("Hot Shot Props © 2025 — FanDuel scraping + AI predictions demo.")
+
