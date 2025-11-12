@@ -13,3 +13,5 @@ urllib3==2.2.3
 certifi>=2024.7.4
 idna==3.7
 charset-normalizer==3.3.2
+scikit-learn==1.5.2
+xgboost==2.1.1
