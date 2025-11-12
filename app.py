@@ -1,20 +1,21 @@
 # -------------------------------------------------
 # app.py | Hot Shot Props – NBA Prop Lab (AI + Live Status)
 # -------------------------------------------------
-# All-in-one version with nested API key for OddsAPI
-# and integrated BallDontLie + Live Status panel.
+# Version: 2025-11-12
+# Includes working OddsAPI + BallDontLie integrations
 # -------------------------------------------------
 
 import streamlit as st
 import pandas as pd
-import time
 import requests
+import time
 from datetime import datetime
-from scripts.fetch_games import load_games_snapshot, fetch_games_today
+from scripts.fetch_games import fetch_games_today
 from scripts.apply_predictions import run_model_predictions
 
-# ---------- YOUR ODDSAPI KEY ----------
-ODDS_API_KEY = "7f4db7a9-c34e-478d-a799-fef77b9d1f78"
+# ---------- API KEYS ----------
+ODDS_API_KEY = "9d7a2fe0abf8c36d7118873e7eb78974"
+BALLDONTLIE_API_KEY = "69e7de67-01fa-4285-8e2f-21e3d8394fd3"
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(
@@ -42,90 +43,90 @@ st.markdown("<h1>🏀 Hot Shot Props</h1>", unsafe_allow_html=True)
 st.markdown("<p style='color:#aaa;'>AI-powered NBA prop prediction lab with real-time edges</p>", unsafe_allow_html=True)
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# ---------- LIVE STATUS PANEL ----------
+# -------------------------------------------------
+# 📡 LIVE DATA STATUS PANEL
+# -------------------------------------------------
 def check_status():
+    """Ping all APIs and return their live status."""
     status = {}
 
     # OddsAPI check
     try:
-        odds_start = time.time()
         resp = requests.get(
             f"https://api.the-odds-api.com/v4/sports/basketball_nba/odds?apiKey={ODDS_API_KEY}",
             timeout=10,
         )
-        odds_time = round((time.time() - odds_start), 2)
         status["OddsAPI"] = {
             "ok": resp.status_code == 200,
             "code": resp.status_code,
-            "time": odds_time,
+            "msg": resp.reason,
         }
     except Exception as e:
-        status["OddsAPI"] = {"ok": False, "code": str(e), "time": None}
+        status["OddsAPI"] = {"ok": False, "code": "ERR", "msg": str(e)}
 
     # BallDontLie check
     try:
-        games_start = time.time()
-        resp = requests.get("https://api.balldontlie.io/v1/games", timeout=10)
-        games_time = round((time.time() - games_start), 2)
+        headers = {"Authorization": f"Bearer {BALLDONTLIE_API_KEY}"}
+        resp = requests.get("https://api.balldontlie.io/v1/games", headers=headers, timeout=10)
         status["BallDontLie"] = {
             "ok": resp.status_code == 200,
             "code": resp.status_code,
-            "time": games_time,
+            "msg": resp.reason,
         }
     except Exception as e:
-        status["BallDontLie"] = {"ok": False, "code": str(e), "time": None}
+        status["BallDontLie"] = {"ok": False, "code": "ERR", "msg": str(e)}
 
-    # NBA Stats check (still may time out)
+    # NBA Stats (expected to timeout)
     try:
-        nba_start = time.time()
         resp = requests.get("https://stats.nba.com/stats/scoreboardv2", timeout=10)
-        nba_time = round((time.time() - nba_start), 2)
         status["NBA Stats"] = {
             "ok": resp.status_code == 200,
             "code": resp.status_code,
-            "time": nba_time,
+            "msg": resp.reason,
         }
     except Exception as e:
-        status["NBA Stats"] = {"ok": False, "code": str(e), "time": None}
+        status["NBA Stats"] = {"ok": False, "code": "ERR", "msg": str(e)}
 
     return status
 
 
 def render_status_panel():
-    """Display API health visually in the dashboard."""
+    """Display API health visually in dashboard."""
     st.markdown("### 📡 Live Data Status")
     status = check_status()
     cols = st.columns(3)
+
     for i, (name, data) in enumerate(status.items()):
         col = cols[i]
         if data["ok"]:
             col.markdown(
                 f"<div class='data-status'><h4>{name}</h4>"
                 f"<p class='status-ok'>🟢 ONLINE</p>"
-                f"<p>Response: {data['code']} • {data['time']}s</p></div>",
+                f"<p>{data['code']} – {data['msg']}</p></div>",
                 unsafe_allow_html=True,
             )
-        elif data["time"] is None:
+        elif str(data["code"]) == "401":
             col.markdown(
                 f"<div class='data-status'><h4>{name}</h4>"
-                f"<p class='status-err'>🔴 OFFLINE</p>"
-                f"<p>{data['code']}</p></div>",
+                f"<p class='status-warn'>🟡 UNAUTHORIZED</p>"
+                f"<p>401 – Invalid or missing API key</p></div>",
                 unsafe_allow_html=True,
             )
         else:
             col.markdown(
                 f"<div class='data-status'><h4>{name}</h4>"
-                f"<p class='status-warn'>🟡 UNSTABLE</p>"
-                f"<p>Response: {data['code']} • {data['time']}s</p></div>",
+                f"<p class='status-err'>🔴 OFFLINE</p>"
+                f"<p>{data['code']} – {data['msg']}</p></div>",
                 unsafe_allow_html=True,
             )
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
-
-# ---------- FETCH ODDS FROM ODDSAPI ----------
+# -------------------------------------------------
+# 📊 Fetch Odds via OddsAPI
+# -------------------------------------------------
 def fetch_odds_data():
-    """Fetch FanDuel props via OddsAPI (using embedded key)."""
+    """Fetch FanDuel props via OddsAPI."""
     st.info("📊 Fetching FanDuel NBA player props...")
     url = (
         f"https://api.the-odds-api.com/v4/sports/basketball_nba/odds"
@@ -136,8 +137,9 @@ def fetch_odds_data():
     try:
         resp = requests.get(url, timeout=30)
         if resp.status_code != 200:
-            st.error(f"OddsAPI Error: {resp.status_code}")
+            st.error(f"OddsAPI Error: {resp.status_code} — {resp.reason}")
             return pd.DataFrame()
+
         data = resp.json()
         records = []
         for event in data:
@@ -156,13 +158,19 @@ def fetch_odds_data():
                             "game": game,
                         })
         df = pd.DataFrame(records)
-        st.success(f"✅ Loaded {len(df)} props from OddsAPI.")
+        if df.empty:
+            st.warning("⚠️ No props found in OddsAPI response.")
+        else:
+            st.success(f"✅ Loaded {len(df)} props from OddsAPI.")
         return df
+
     except Exception as e:
         st.error(f"⚠️ Error fetching OddsAPI data: {e}")
         return pd.DataFrame()
 
-# ---------- RENDER APP ----------
+# -------------------------------------------------
+# 🚀 Main Runtime
+# -------------------------------------------------
 render_status_panel()
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -177,14 +185,14 @@ odds_df, games_df = load_data()
 if not odds_df.empty and not games_df.empty:
     st.success(f"✅ Data refreshed successfully — {datetime.now().strftime('%b %d, %Y %I:%M %p')}")
 else:
-    st.warning("⚠️ Data sources may be offline. Check API status above.")
+    st.warning("⚠️ Data sources may be offline or unauthorized. Check API status above.")
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# ---------- DISPLAY ----------
+# ---------- Display Games ----------
 st.markdown("### 🏀 Today's Games")
 if games_df.empty:
-    st.warning("No games found for today (check data source).")
+    st.warning("No games found for today (check BallDontLie or key validity).")
 else:
     st.dataframe(
         games_df[["home_team", "away_team", "status"]].reset_index(drop=True),
@@ -194,6 +202,7 @@ else:
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
+# ---------- Display AI Model Predictions ----------
 st.markdown("### 🤖 Top AI Model Edges (Projected Value Bets)")
 if not odds_df.empty and not games_df.empty:
     preds_df = run_model_predictions(odds_df, games_df)
@@ -205,7 +214,7 @@ if not odds_df.empty and not games_df.empty:
         hide_index=True,
     )
 else:
-    st.info("No odds data available yet.")
+    st.info("No odds data available.")
 
 st.markdown("<hr>", unsafe_allow_html=True)
 st.markdown(
