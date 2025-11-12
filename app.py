@@ -5,6 +5,8 @@
 import streamlit as st
 import pandas as pd
 import requests
+import time
+from datetime import datetime
 from scripts.fetch_fanduel import fetch_fanduel_props
 
 
@@ -132,4 +134,5 @@ except Exception as e:
 
 st.markdown("---")
 st.caption("Hot Shot Props © 2025 — FanDuel scraping + AI predictions demo.")
+
 
