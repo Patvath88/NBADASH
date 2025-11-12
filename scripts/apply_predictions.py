@@ -1,93 +1,62 @@
 # -------------------------------------------------
 # scripts/apply_predictions.py
 # -------------------------------------------------
-# Hot Shot Props — AI Prediction Runner
-# Runs trained models on today's player feature set,
-# compares to sportsbook lines, and saves ranked output
+# Hot Shot Props – AI Model Prediction Stub
+# Applies simple baseline predictions & edges to FanDuel data.
+# You can later replace this with your trained ML model.
 # -------------------------------------------------
 
-import os
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from scripts.build_features import build_feature_set
-from models.prop_model import predict_props
-from scripts.fetch_fanduel import fetch_fanduel_data
-
-OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "model_predictions.csv")
-
 
 # -------------------------------------------------
-# Compute edge value
+# MAIN FUNCTION
 # -------------------------------------------------
-def calculate_edge(projection, line):
-    """Compute % edge between model projection and sportsbook line."""
-    try:
-        return round(((projection - line) / line) * 100, 1)
-    except Exception:
-        return None
-
-
-# -------------------------------------------------
-# Run daily model predictions
-# -------------------------------------------------
-def run_model_predictions(player_list=None):
+def run_model_predictions(fanduel_df: pd.DataFrame, games_df: pd.DataFrame = None):
     """
-    Full end-to-end run:
-    1. Build feature set
-    2. Predict stats
-    3. Merge with live FanDuel props
-    4. Compute edges
-    5. Save CSV for dashboard
+    Takes FanDuel props and (optionally) today's games,
+    applies a mock prediction model, and returns DataFrame
+    with expected values, model projections, and edge %.
     """
-    if player_list is None:
-        player_list = [
-            "LeBron James", "Luka Doncic", "Jayson Tatum",
-            "Nikola Jokic", "Giannis Antetokounmpo",
-            "Kevin Durant", "Shai Gilgeous-Alexander",
-            "Anthony Davis", "Tyrese Haliburton"
-        ]
 
-    print("📦 Building feature set...")
-    feature_df = build_feature_set(player_list)
-    if feature_df.empty:
-        print("⚠️ Feature set is empty.")
+    if fanduel_df is None or fanduel_df.empty:
+        print("⚠️ No FanDuel data provided — skipping predictions.")
         return pd.DataFrame()
 
-    print("🤖 Running AI model predictions...")
-    results = []
-    for _, row in feature_df.iterrows():
-        player_name = row["player"]
-        sample = feature_df[feature_df["player"] == player_name]
-        preds = predict_props(sample)
-        preds["player"] = player_name
-        results.append(preds)
+    # --- Basic placeholder prediction logic ---
+    df = fanduel_df.copy()
+    np.random.seed(42)
 
-    pred_df = pd.concat(results, ignore_index=True)
-    print(f"✅ Model generated {len(pred_df)} player-prop projections.")
+    # Randomized prediction logic (to simulate model output)
+    df["model_projection"] = df["line"] + np.random.uniform(-3, 3, len(df))
+    df["expected_value_over"] = (df["model_projection"] - df["line"]) * 1.5
+    df["expected_value_under"] = (df["line"] - df["model_projection"]) * 1.5
 
-    # Merge with FanDuel odds
-    print("📊 Fetching live FanDuel props...")
-    odds_df = fetch_fanduel_data()
-    if odds_df.empty:
-        print("⚠️ No odds data; skipping edge computation.")
-        return pred_df
+    # Edge % based on how far model deviates from line
+    df["edge_pct"] = np.round(
+        np.abs(df["model_projection"] - df["line"]) / df["line"] * 100, 2
+    )
 
-    odds_df["prop_type"] = odds_df["prop_type"].str.replace("Player ", "").str.replace(" Points", "PTS").str.replace(" Rebounds", "REB").str.replace(" Assists", "AST")
-    merged = pd.merge(pred_df, odds_df, on=["player", "prop_type"], how="left")
+    # Sort descending by edge for dashboard display
+    df = df.sort_values(by="edge_pct", ascending=False).reset_index(drop=True)
+    df["timestamp"] = datetime.utcnow().isoformat()
 
-    # Compute edge
-    merged["edge_%"] = merged.apply(lambda r: calculate_edge(r["projection"], r["line"]), axis=1)
-    merged = merged.dropna(subset=["edge_%"])
-    merged = merged.sort_values("edge_%", ascending=False)
-
-    merged["timestamp"] = datetime.utcnow().isoformat()
-    merged.to_csv(OUTPUT_PATH, index=False)
-    print(f"✅ Predictions + edges saved → {OUTPUT_PATH}")
-
-    return merged
+    print(f"✅ Generated predictions for {len(df)} props.")
+    return df
 
 
+# -------------------------------------------------
+# TEST ENTRY POINT
+# -------------------------------------------------
 if __name__ == "__main__":
-    df = run_model_predictions()
-    print(df.head(15))
+    # Example test run
+    test_data = pd.DataFrame({
+        "player": ["LeBron James", "Jayson Tatum", "Nikola Jokic"],
+        "prop_type": ["PTS", "REB", "AST"],
+        "line": [25.5, 8.5, 9.5],
+        "odds_over": [-115, -110, -120],
+        "odds_under": [-105, -110, 100],
+    })
+    result = run_model_predictions(test_data)
+    print(result.head())
