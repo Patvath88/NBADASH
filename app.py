@@ -1,12 +1,13 @@
 # -------------------------------------------------
-# app.py | Hot Shot Props – NBA Prop Lab (AI Edition)
+# app.py | Hot Shot Props – Infinite Loader Edition
 # -------------------------------------------------
-# Displays: Game Slate + AI Model Top Edges + Player Analyzer Link
-# Auto-refreshes data each runtime and self-heals missing files.
+# Never times out. Keeps retrying fetches until data is loaded.
+# Shows user-friendly progress messages during long waits.
 # -------------------------------------------------
 
 import streamlit as st
 import pandas as pd
+import time
 from datetime import datetime
 from scripts.fetch_fanduel import load_fanduel_snapshot, fetch_fanduel_data
 from scripts.fetch_games import load_games_snapshot, fetch_games_today
@@ -19,7 +20,7 @@ st.set_page_config(
     layout="wide",
 )
 
-# ---------- STYLES ----------
+# ---------- STYLE ----------
 st.markdown("""
 <style>
 body {background:#121212;color:#EAEAEA;font-family:'Roboto',sans-serif;}
@@ -30,74 +31,87 @@ hr {border:0;border-top:1px solid #333;margin:1rem 0;}
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- TITLE ----------
+# ---------- HEADER ----------
 st.markdown("<h1>🏀 Hot Shot Props</h1>", unsafe_allow_html=True)
 st.markdown("<p style='color:#aaa;'>AI-powered NBA prop prediction lab with real-time edges</p>", unsafe_allow_html=True)
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# ---------- LOAD OR REFRESH DATA ----------
-@st.cache_data(ttl=60*60, show_spinner=False)
-def load_data():
-    """Auto-fetch and load all required data safely."""
-    try:
-        odds_df = load_fanduel_snapshot()
-        if odds_df.empty:
-            odds_df = fetch_fanduel_data()
-    except Exception as e:
-        st.error(f"Error loading odds: {e}")
-        odds_df = pd.DataFrame()
+# ---------- INFINITE FETCH LOOP ----------
+def wait_for_data():
+    """Keep retrying until valid odds & games are fetched."""
+    odds_df, games_df = pd.DataFrame(), pd.DataFrame()
+    progress = st.empty()
+    spinner = st.empty()
+    tries = 0
 
-    try:
-        games_df = load_games_snapshot()
-        if games_df.empty:
-            games_df = fetch_games_today()
-    except Exception as e:
-        st.error(f"Error loading games: {e}")
-        games_df = pd.DataFrame()
+    while (odds_df.empty or games_df.empty):
+        tries += 1
+        spinner.info(f"⏳ Attempt {tries}: Fetching live NBA odds and games... please wait.")
+        time.sleep(1)
 
+        try:
+            # Odds first
+            odds_df = load_fanduel_snapshot()
+            if odds_df.empty:
+                odds_df = fetch_fanduel_data()
+        except Exception as e:
+            st.warning(f"⚠️ Error loading odds: {e}")
+            odds_df = pd.DataFrame()
+
+        try:
+            # Then games
+            games_df = load_games_snapshot()
+            if games_df.empty:
+                games_df = fetch_games_today()
+        except Exception as e:
+            st.warning(f"⚠️ Error loading games: {e}")
+            games_df = pd.DataFrame()
+
+        # small sleep between retries to prevent API hammering
+        if odds_df.empty or games_df.empty:
+            progress.progress(min(1.0, (tries % 10) / 10.0))
+            time.sleep(30)  # wait 30 sec then retry
+
+    progress.empty()
+    spinner.success(f"✅ Data loaded successfully after {tries} attempt(s).")
     return odds_df, games_df
 
 
-with st.spinner("Fetching live data..."):
-    odds_df, games_df = load_data()
+# ---------- MAIN ----------
+odds_df, games_df = wait_for_data()
 
-# ---------- STATUS CHECK ----------
-if odds_df.empty or games_df.empty:
-    st.warning("⚠️ No games or odds found (possibly due to UTC timing or offseason).")
-else:
-    st.success(f"✅ Data refreshed successfully — {datetime.now().strftime('%b %d, %Y %I:%M %p')}")
+st.markdown(f"<p style='color:#0f0;'>Last updated: {datetime.now().strftime('%b %d, %Y %I:%M %p')}</p>", unsafe_allow_html=True)
+st.markdown("<hr>", unsafe_allow_html=True)
 
-# ---------- DISPLAY GAME SLATE ----------
+# ---------- DISPLAY GAMES ----------
 st.markdown("### 🏀 Today's Games")
 if games_df.empty:
-    st.info("No games found for today (may be due to UTC timing or offseason).")
+    st.info("No games found for today (may be due to offseason).")
 else:
     st.dataframe(
-        games_df[["home_team", "away_team", "game_time", "status"]].reset_index(drop=True),
-        use_container_width=True
+        games_df[["home_team", "away_team", "game_time", "status"]],
+        use_container_width=True,
+        hide_index=True
     )
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# ---------- RUN AI MODEL PREDICTIONS ----------
+# ---------- RUN MODEL ----------
 st.markdown("### 🤖 Top AI Model Edges (Projected Value Bets)")
 try:
-    if not odds_df.empty:
-        preds_df = run_model_predictions(odds_df, games_df)
-        if preds_df.empty:
-            st.info("No AI model predictions yet. Try again after data refresh.")
-        else:
-            st.dataframe(
-                preds_df[
-                    ["player", "prop_type", "line", "model_projection", "edge_pct", "expected_value_over", "expected_value_under"]
-                ].round(2),
-                use_container_width=True,
-                hide_index=True
-            )
+    preds_df = run_model_predictions(odds_df, games_df)
+    if preds_df.empty:
+        st.info("No AI model predictions yet — waiting for prop lines.")
     else:
-        st.info("No odds data available.")
+        st.dataframe(
+            preds_df[
+                ["player", "prop_type", "line", "model_projection", "edge_pct", "expected_value_over", "expected_value_under"]
+            ].round(2),
+            use_container_width=True,
+            hide_index=True
+        )
 except Exception as e:
-    st.error(f"Error running model predictions: {e}")
+    st.error(f"⚠️ Error running model predictions: {e}")
 
 # ---------- FOOTER ----------
 st.markdown("<hr>", unsafe_allow_html=True)
