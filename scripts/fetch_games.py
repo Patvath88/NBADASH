@@ -18,9 +18,8 @@ def fetch_games_today():
     """
     from datetime import datetime, timedelta, timezone
 
-EST = timezone(timedelta(hours=-5))
-today = datetime.now(EST).strftime("%Y-%m-%d")
-
+    EST = timezone(timedelta(hours=-5))
+    today = datetime.now(EST).strftime("%Y-%m-%d")
     print(f"Fetching NBA games for {today}...")
 
     try:
@@ -68,4 +67,5 @@ if __name__ == "__main__":
         print(df.head())
     else:
         print("No NBA games available today.")
+
 
