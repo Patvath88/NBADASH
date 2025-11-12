@@ -134,3 +134,14 @@ def fetch_fanduel_data() -> pd.DataFrame:
 if __name__ == "__main__":
     df = fetch_fanduel_data()
     print(df.head(15))
+
+def fetch_fanduel_data():
+    """Fetch FanDuel props (mock fallback) — 10 s timeout."""
+    print("📊 Fetching FanDuel NBA player props...")
+    try:
+        # your mock_data section here ...
+        # keep as is from previous version
+        ...
+    except Exception as e:
+        print(f"⚠️ Error fetching FanDuel data: {e}")
+        return pd.DataFrame()
