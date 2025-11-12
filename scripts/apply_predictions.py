@@ -1,15 +1,15 @@
-# scripts/apply_predictions.py
 import pandas as pd
 import numpy as np
 
-def run_model_predictions(odds_df: pd.DataFrame, games_df: pd.DataFrame) -> pd.DataFrame:
-    """Simple random model to prove dashboard flow."""
-    if odds_df.empty:
+def run_model_predictions(props_df: pd.DataFrame, games_df: pd.DataFrame):
+    """Mock AI predictions combining props and games."""
+    if props_df.empty or games_df.empty:
         return pd.DataFrame()
-    df = odds_df.copy()
-    np.random.seed(42)
-    df["model_projection"] = np.random.uniform(0, 1, len(df))
-    df["edge_pct"] = np.random.uniform(0, 0.3, len(df))
-    df["expected_value_over"] = np.random.uniform(-0.05, 0.1, len(df))
-    df["expected_value_under"] = np.random.uniform(-0.05, 0.1, len(df))
-    return df
+
+    # Example simple prediction model placeholder
+    props_df = props_df.copy()
+    props_df["predicted_value"] = np.random.uniform(-10, 10, len(props_df)).round(2)
+    props_df["edge_value"] = (props_df["predicted_value"] - props_df["line"]).round(2)
+    props_df["edge_flag"] = np.where(props_df["edge_value"] > 0, "🔥 Over", "❄️ Under")
+
+    return props_df[["player", "prop_type", "line", "odds", "predicted_value", "edge_value", "edge_flag", "game"]]
