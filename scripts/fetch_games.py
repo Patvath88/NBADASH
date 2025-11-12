@@ -16,7 +16,11 @@ def fetch_games_today():
     Fetch today's NBA games (date = system local time).
     Returns a DataFrame with game_id, teams, and start time.
     """
-    today = datetime.now().strftime("%Y-%m-%d")
+    from datetime import datetime, timedelta, timezone
+
+EST = timezone(timedelta(hours=-5))
+today = datetime.now(EST).strftime("%Y-%m-%d")
+
     print(f"Fetching NBA games for {today}...")
 
     try:
@@ -64,3 +68,4 @@ if __name__ == "__main__":
         print(df.head())
     else:
         print("No NBA games available today.")
+
