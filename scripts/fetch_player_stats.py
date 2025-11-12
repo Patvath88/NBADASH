@@ -44,60 +44,44 @@ def _cache_path(player_name: str, season: str):
 # -------------------------------------------------
 # MAIN FUNCTION
 # -------------------------------------------------
-def get_player_stats_summary(player_name: str, season: str = "2024-25"):
+def get_player_stats_summary(player_name: str, prop_type: str = None, season: str = "2024-25"):
     """
-    Fetch player logs for given player name.
-    Caches results locally to avoid hitting NBA API repeatedly.
+    Fetch player logs for a given player name and optional prop type.
+    Returns (logs_df, summary_dict)
     """
     pid = _get_player_id(player_name)
     if not pid:
         print(f"⚠️ Player not found: {player_name}")
-        return pd.DataFrame()
+        return pd.DataFrame(), {}
 
     cache_file = _cache_path(player_name, season)
-    # Return cached logs if fresh (under 12h old)
+    # Load cache if available
     if os.path.exists(cache_file) and (time.time() - os.path.getmtime(cache_file)) < 43200:
         try:
             with open(cache_file, "r") as f:
                 data = json.load(f)
-            return pd.DataFrame(data)
-        except Exception:
-            pass  # fall back to refetch
-
-    # Attempt up to 3 times (for rate-limit safety)
-    for attempt in range(3):
-        try:
-            print(f"📈 Fetching logs for {player_name} (attempt {attempt+1})...")
-            gamelog = playergamelog.PlayerGameLog(player_id=pid, season=season, timeout=30)
-            df = gamelog.get_data_frames()[0]
-            df["PLAYER_NAME"] = player_name
-            df["fetched_at"] = datetime.utcnow().isoformat()
-
-            # Save to cache
-            df.to_json(cache_file, orient="records", indent=2)
-            print(f"✅ Saved {len(df)} games for {player_name} → {cache_file}")
-            return df
-
-        except (ReadTimeout, ConnectionError) as e:
-            print(f"⚠️ Timeout for {player_name}: {e}. Retrying...")
-            time.sleep(3)
-
-        except Exception as e:
-            print(f"⚠️ Error fetching logs for {player_name}: {e}")
-            time.sleep(1)
-
-    # Fallback: try to load stale cache if available
-    if os.path.exists(cache_file):
-        try:
-            with open(cache_file, "r") as f:
-                data = json.load(f)
-            print(f"⚠️ Using cached logs for {player_name} (API unreachable).")
-            return pd.DataFrame(data)
+            df = pd.DataFrame(data)
+            summary = {"games": len(df), "avg_pts": df["PTS"].mean() if "PTS" in df else None}
+            return df, summary
         except Exception:
             pass
 
-    print(f"🚫 No logs available for {player_name}")
-    return pd.DataFrame()
+    # Fetch new data
+    try:
+        gamelog = playergamelog.PlayerGameLog(player_id=pid, season=season, timeout=30)
+        df = gamelog.get_data_frames()[0]
+        df["PLAYER_NAME"] = player_name
+        df["fetched_at"] = datetime.utcnow().isoformat()
+
+        df.to_json(cache_file, orient="records", indent=2)
+        summary = {"games": len(df), "avg_pts": df["PTS"].mean() if "PTS" in df else None}
+        print(f"✅ Saved logs for {player_name}")
+        return df, summary
+
+    except Exception as e:
+        print(f"⚠️ Error fetching logs for {player_name}: {e}")
+        return pd.DataFrame(), {}
+
 
 
 # -------------------------------------------------
@@ -123,3 +107,4 @@ if __name__ == "__main__":
     test_players = ["LeBron James", "Stephen Curry", "Luka Doncic"]
     df = bulk_fetch_players(test_players)
     print(df.head())
+
