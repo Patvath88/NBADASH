@@ -1,153 +1,108 @@
+# -------------------------------------------------
+# app.py | Hot Shot Props – NBA Prop Lab (AI Edition)
+# -------------------------------------------------
+# Displays: Game Slate + AI Model Top Edges + Player Analyzer Link
+# Auto-refreshes data each runtime and self-heals missing files.
+# -------------------------------------------------
+
 import streamlit as st
 import pandas as pd
-import json
-import os
 from datetime import datetime
-from scripts.fetch_fanduel import fetch_fanduel_data
-from scripts.fetch_games import fetch_games_today
+from scripts.fetch_fanduel import load_fanduel_snapshot, fetch_fanduel_data
+from scripts.fetch_games import load_games_snapshot, fetch_games_today
 from scripts.apply_predictions import run_model_predictions
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(
     page_title="🏀 Hot Shot Props | NBA Prop Lab (AI)",
     page_icon="🏀",
-    layout="wide"
+    layout="wide",
 )
 
-# ---------- STYLE ----------
+# ---------- STYLES ----------
 st.markdown("""
 <style>
 body {background:#121212;color:#EAEAEA;font-family:'Roboto',sans-serif;}
-.title {font-size:34px;font-weight:700;color:#FF6F00;text-shadow:0 0 6px #FF9F43;}
-.subtext {font-size:16px;color:#BBB;margin-bottom:12px;}
-.card {
-  background:#1C1C1C;border-radius:12px;padding:16px;margin-bottom:12px;
-  box-shadow:0 0 10px rgba(0,0,0,0.35);
-}
-.prop-row {display:flex;justify-content:space-between;align-items:center;padding:4px 0;}
-.prop-type {font-weight:600;color:#FF9F43;}
-.line {color:#EAEAEA;}
-.ev {font-weight:600;}
-.edge-bar {
-  height:10px;border-radius:5px;background:linear-gradient(90deg,#FF9F43,#FF6F00);
-}
+h1,h2,h3 {color:#FF6F00;text-shadow:0 0 8px #FF9F43;font-family:'Oswald',sans-serif;}
+div[data-testid="stAlert"] p {font-size:16px;}
+hr {border:0;border-top:1px solid #333;margin:1rem 0;}
+.section {background:#1C1C1C;border-radius:12px;padding:1rem;margin-bottom:1rem;}
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- HEADER ----------
-st.markdown(f"<div class='title'>🏀 Hot Shot Props</div>", unsafe_allow_html=True)
-st.markdown("<div class='subtext'>AI-powered NBA prop prediction lab with real-time edges</div>", unsafe_allow_html=True)
-st.markdown("---")
+# ---------- TITLE ----------
+st.markdown("<h1>🏀 Hot Shot Props</h1>", unsafe_allow_html=True)
+st.markdown("<p style='color:#aaa;'>AI-powered NBA prop prediction lab with real-time edges</p>", unsafe_allow_html=True)
+st.markdown("<hr>", unsafe_allow_html=True)
 
-
-# ---------- LOAD DATA HELPERS ----------
-@st.cache_data(ttl=600)
-def load_odds_data():
+# ---------- LOAD OR REFRESH DATA ----------
+@st.cache_data(ttl=60*60, show_spinner=False)
+def load_data():
+    """Auto-fetch and load all required data safely."""
     try:
-        odds_path = os.path.join("data", "odds_snapshot.json")
-        if not os.path.exists(odds_path):
-            df = fetch_fanduel_data()
-        else:
-            with open(odds_path, "r") as f:
-                df = pd.DataFrame(json.load(f))
-        return df
+        odds_df = load_fanduel_snapshot()
+        if odds_df.empty:
+            odds_df = fetch_fanduel_data()
     except Exception as e:
         st.error(f"Error loading odds: {e}")
-        return pd.DataFrame()
+        odds_df = pd.DataFrame()
 
-
-@st.cache_data(ttl=600)
-def load_games_data():
     try:
-        games_path = os.path.join("data", "games_today.json")
-        if not os.path.exists(games_path):
-            df = fetch_games_today()
-        else:
-            with open(games_path, "r") as f:
-                df = pd.DataFrame(json.load(f))
-        return df
+        games_df = load_games_snapshot()
+        if games_df.empty:
+            games_df = fetch_games_today()
     except Exception as e:
         st.error(f"Error loading games: {e}")
-        return pd.DataFrame()
+        games_df = pd.DataFrame()
+
+    return odds_df, games_df
 
 
-@st.cache_data(ttl=3600)
-def load_model_predictions():
-    try:
-        pred_path = os.path.join("data", "model_predictions.csv")
-        if not os.path.exists(pred_path):
-            df = run_model_predictions()
-        else:
-            df = pd.read_csv(pred_path)
-        return df
-    except Exception as e:
-        st.error(f"Error loading predictions: {e}")
-        return pd.DataFrame()
+with st.spinner("Fetching live data..."):
+    odds_df, games_df = load_data()
 
+# ---------- STATUS CHECK ----------
+if odds_df.empty or games_df.empty:
+    st.warning("⚠️ No games or odds found (possibly due to UTC timing or offseason).")
+else:
+    st.success(f"✅ Data refreshed successfully — {datetime.now().strftime('%b %d, %Y %I:%M %p')}")
 
-# ---------- LOAD DATA ----------
-odds_df = load_odds_data()
-games_df = load_games_data()
-pred_df = load_model_predictions()
-
-# ---------- SECTION 1: Today's Games ----------
-st.subheader(f"📅 Today's Games — {datetime.now().strftime('%b %d, %Y')}")
+# ---------- DISPLAY GAME SLATE ----------
+st.markdown("### 🏀 Today's Games")
 if games_df.empty:
-    st.warning("No games found for today (may be due to UTC timing or offseason).")
+    st.info("No games found for today (may be due to UTC timing or offseason).")
 else:
-    for _, game in games_df.iterrows():
-        st.markdown(
-            f"<div class='card'><b>{game['away_team']}</b> @ <b>{game['home_team']}</b> "
-            f"<span style='color:#888'>— {game['game_time']}</span></div>",
-            unsafe_allow_html=True
-        )
-
-
-# ---------- SECTION 2: AI Model Top Edges ----------
-st.markdown("---")
-st.subheader("🤖 Top AI Model Edges (Projected Value Bets)")
-
-if pred_df.empty:
-    st.info("No AI model predictions yet. Run `scripts/apply_predictions.py` manually or wait for data refresh.")
-else:
-    # Keep only highest-edge props
-    top_edges = pred_df.sort_values("edge_%", ascending=False).head(15)
-
     st.dataframe(
-        top_edges[["player", "prop_type", "projection", "line", "edge_%", "odds_over"]]
-        .rename(columns={
-            "player": "Player",
-            "prop_type": "Prop",
-            "projection": "Model Projection",
-            "line": "Sportsbook Line",
-            "edge_%": "Edge %",
-            "odds_over": "Odds"
-        }),
-        hide_index=True,
+        games_df[["home_team", "away_team", "game_time", "status"]].reset_index(drop=True),
         use_container_width=True
     )
 
-    # Visual edge summary
-    st.markdown("### 🔥 Edge Strength Overview")
-    for _, row in top_edges.iterrows():
-        bar_width = max(0, min(100, row["edge_%"])) if not pd.isna(row["edge_%"]) else 0
-        st.markdown(
-            f"<div class='card'>"
-            f"<b>{row['player']}</b> — {row['prop_type']} "
-            f"<span style='color:#BBB'>(Proj: {row['projection']} vs {row['line']})</span><br>"
-            f"<div class='edge-bar' style='width:{bar_width}%;'></div>"
-            f"<span class='ev'>Edge: {row['edge_%']}%</span>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
+st.markdown("<hr>", unsafe_allow_html=True)
 
+# ---------- RUN AI MODEL PREDICTIONS ----------
+st.markdown("### 🤖 Top AI Model Edges (Projected Value Bets)")
+try:
+    if not odds_df.empty:
+        preds_df = run_model_predictions(odds_df, games_df)
+        if preds_df.empty:
+            st.info("No AI model predictions yet. Try again after data refresh.")
+        else:
+            st.dataframe(
+                preds_df[
+                    ["player", "prop_type", "line", "model_projection", "edge_pct", "expected_value_over", "expected_value_under"]
+                ].round(2),
+                use_container_width=True,
+                hide_index=True
+            )
+    else:
+        st.info("No odds data available.")
+except Exception as e:
+    st.error(f"Error running model predictions: {e}")
 
 # ---------- FOOTER ----------
-st.markdown("---")
-st.markdown(
-    "<div style='color:#888;font-size:14px;'>"
-    "Built by <b>Hot Shot Props</b> • AI-powered NBA analytics platform • "
-    "Data from NBA API & FanDuel</div>",
-    unsafe_allow_html=True
-)
-
+st.markdown("<hr>", unsafe_allow_html=True)
+st.markdown("""
+<p style='text-align:center;color:#888;font-size:13px;'>
+Built by <b>Hot Shot Props</b> • AI-powered NBA analytics platform • Data from NBA API & FanDuel
+</p>
+""", unsafe_allow_html=True)
